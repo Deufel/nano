@@ -13,7 +13,6 @@ for suf in ("", "-wal", "-shm"):
     if os.path.exists(p):
         os.remove(p)
 
-sys.path.insert(0, "/home/claude/py_sse_v8")
 import py_sse
 orig_db = py_sse.Database
 def patched_db(path, *a, **kw):
@@ -21,7 +20,9 @@ def patched_db(path, *a, **kw):
 py_sse.Database = patched_db
 
 import importlib.util
-spec = importlib.util.spec_from_file_location("todo_app", "/home/claude/py_sse_v8/todo.py")
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_TODO_PY = os.path.join(_HERE, "..", "examples", "todo.py")
+spec = importlib.util.spec_from_file_location("todo_app", _TODO_PY)
 todo_app = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(todo_app)
 py_sse.Database = orig_db

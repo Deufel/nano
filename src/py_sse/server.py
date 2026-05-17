@@ -639,7 +639,11 @@ def _stream_live(topic, capacity, changes, render_inner_html,
 
     reason = "client_disconnect"
     try:
+        # Wake peer streams parked in changes.wait(topic) so they re-render
+        # with the new viewer count. Joins/leaves are rarer than writes; the
+        # cost is bounded and matches what writes already do.
         with capacity.join(topic):
+            changes.notify(topic)       # peer wake on join
             frames_sent += 1
             yield frame()
             while True:
@@ -655,6 +659,11 @@ def _stream_live(topic, capacity, changes, render_inner_html,
         reason = f"error:{type(e).__name__}"
         raise
     finally:
+        # capacity.__exit__ has already decremented by the time we get here
+        # (Python runs nested context managers / generator unwinding before
+        # outer finally). Wake peers with the lower count.
+        try:    changes.notify(topic)   # peer wake on leave
+        except: pass
         on_event({"type": "stream_close", "topic": topic, "remote": remote,
                   "reason": reason, "frames": frames_sent,
                   "duration_s": time.time() - started})

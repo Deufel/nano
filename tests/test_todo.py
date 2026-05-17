@@ -16,7 +16,7 @@ for suf in ("", "-wal", "-shm"):
         os.remove(p)
 
 # Use the new package
-sys.path.insert(0, "/home/claude/py_sse_v8")
+# (py-sse is installed in the venv; no sys.path manipulation needed)
 
 # Patch Database to use temp db
 import py_sse
@@ -26,7 +26,9 @@ def patched_db(path, *a, **kw):
 py_sse.Database = patched_db
 
 import importlib.util
-spec = importlib.util.spec_from_file_location("todo_app", "/home/claude/py_sse_v8/todo.py")
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_TODO_PY = os.path.join(_HERE, "..", "examples", "todo.py")
+spec = importlib.util.spec_from_file_location("todo_app", _TODO_PY)
 todo_app = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(todo_app)
 py_sse.Database = orig_db
