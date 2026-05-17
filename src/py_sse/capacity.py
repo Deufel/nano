@@ -50,6 +50,11 @@ class Capacity:
         with self._lock:
             return self._counts.get(resource_id, 0)
 
+    def total(self):
+        """Sum of active connections across all resources (server-wide)."""
+        with self._lock:
+            return sum(self._counts.values())
+
     def mode(self, resource_id):
         """Current service mode: 'live', 'poll', or 'static'."""
         count = self.count(resource_id)

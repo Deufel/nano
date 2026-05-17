@@ -46,26 +46,27 @@ def get(path, headers=None):
     return urllib.request.urlopen(req, timeout=3)
 
 
-# Test 1: first viewer is live (gets data-init)
+# Test 1: first viewer's navigation gets data-init
 resp = get("/")
 body = resp.read().decode()
 assert "data-init" in body
 assert "data-on-interval" not in body
-print("test 1 (first viewer: data-init for SSE) OK")
+print("test 1 (first viewer: navigation has data-init) OK")
 
-# Open an SSE stream to occupy the live slot
-sse_resp = get("/", headers={"accept": "text/event-stream", "accept-encoding": "identity"})
+# Open an SSE stream (simulating Datastar follow-up) to occupy the live slot
+sse_resp = get("/", headers={"datastar-request": "true", "accept-encoding": "identity"})
 _ = sse_resp.fp.read1(2048)  # read first frame
 time.sleep(0.2)
 assert lc.count("todo") == 1
 print(f"test 2 (SSE stream is open, viewer count = {lc.count('todo')}) OK")
 
-# Now viewer count >= soft_cap. Next initial GET should be in poll mode.
-resp = get("/")
+# Now viewer count >= soft_cap. Next Datastar follow-up should be poll mode.
+# (Note: navigation still returns data-init; only Datastar follow-ups see mode.)
+resp = get("/", headers={"datastar-request": "true"})
 body = resp.read().decode()
-assert "data-on-interval" in body, "second viewer should be polled, not live"
+assert "data-on-interval" in body, f"second Datastar request should be polled, not live; got {body[:300]}"
 assert "data-init" not in body
-print("test 3 (second viewer over soft_cap: data-on-interval for polling) OK")
+print("test 3 (second viewer over soft_cap: Datastar follow-up is poll) OK")
 
 # Extract the polling interval and verify it's in the configured range
 import re
@@ -75,30 +76,30 @@ interval = int(m.group(1))
 assert 1000 <= interval <= 4000, f"interval {interval} out of range"
 print(f"test 4 (poll interval {interval}ms in [1000, 4000]) OK")
 
-# Open more SSE streams to push past hard_cap
-sse2 = get("/", headers={"accept": "text/event-stream", "accept-encoding": "identity"})
-_ = sse2.fp.read1(2048)
-sse3 = get("/", headers={"accept": "text/event-stream", "accept-encoding": "identity"})
-_ = sse3.fp.read1(2048)
-time.sleep(0.2)
-count = lc.count("todo")
-print(f"  viewer count is now {count}")
+# Test 5: static mode requires count ≥ hard_cap, which under normal request
+# pacing can't happen (the framework refuses to open new streams past soft_cap).
+# We test static-mode response logic directly via a Capacity with hard_cap=0.
+from py_sse import live as _live
+from html_tags import h as _h
+from py_sse.server import Changes as _Changes
 
-# At hard_cap (3), next initial GET should be static (no transport attribute)
-resp = get("/")
-body = resp.read().decode()
-if count >= 3:
-    assert "data-init" not in body, "static mode should have no data-init"
-    assert "data-on-interval" not in body, "static mode should have no data-on-interval"
-    assert 'id="live-root"' in body
-    print("test 5 (viewer at hard_cap: static mode, no auto-update) OK")
-else:
-    print(f"test 5 (couldn't reach hard_cap, only got {count} live viewers) SKIP")
+static_cap = Capacity(soft_cap=0, hard_cap=0)
+captured = {}
+def _capture(e): captured.setdefault("events", []).append(e)
+wrapped_static = _live(lambda req: _h.span("hi"), topic="t")
+fake_req = {
+    "_capacity": static_cap, "_changes": _Changes(),
+    "_head": [], "_ui_theme": "dark", "_on_event": _capture,
+    "params": {}, "headers": {"datastar-request": "true"}, "path": "/",
+}
+status, hdrs, body = wrapped_static(fake_req)
+assert "data-init" not in body, f"static mode shouldn't have data-init: {body[:200]}"
+assert "data-on-interval" not in body, f"static mode shouldn't have data-on-interval: {body[:200]}"
+assert 'id="live-root"' in body
+print("test 5 (capacity at hard_cap → static mode response) OK")
 
-# Close streams; live should come back
+# Close streams
 sse_resp.close()
-sse2.close()
-sse3.close()
 time.sleep(0.5)
 print(f"  after cleanup, viewer count = {lc.count('todo')}")
 

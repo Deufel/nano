@@ -79,15 +79,15 @@ print("test 1 (initial GET / has full envelope + live-root + data-init) OK")
 assert "<form" not in body
 print("test 2 (no <form> tags) OK")
 
-# Test 3: same URL with Accept: text/event-stream returns SSE
-resp = get("/", headers={"accept": "text/event-stream", "accept-encoding": "identity"})
+# Test 3: same URL as a Datastar follow-up returns SSE
+resp = get("/", headers={"datastar-request": "true", "accept-encoding": "identity"})
 assert resp.headers.get("content-type") == "text/event-stream"
 chunk = resp.fp.read1(8192)
 assert b"datastar-patch-elements" in chunk
 assert b'id="live-root"' in chunk
 # SSE frames should NOT contain data-init (would re-trigger stream)
 assert b"data-init" not in chunk
-print("test 3 (same URL with SSE Accept opens stream, no data-init in frame) OK")
+print("test 3 (Datastar follow-up GET opens SSE stream, no data-init in frame) OK")
 resp.close()
 
 # Test 4: add via JSON @post
@@ -98,7 +98,7 @@ assert "buy milk" in body
 print("test 4 (JSON @post adds todo) OK")
 
 # Test 5: notify wakes stream — open SSE, fire write, watch for new frame
-resp = get("/", headers={"accept": "text/event-stream", "accept-encoding": "identity"})
+resp = get("/", headers={"datastar-request": "true", "accept-encoding": "identity"})
 # Read first frame
 initial = b""
 for _ in range(5):

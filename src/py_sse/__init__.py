@@ -50,7 +50,7 @@ from .server import (
 from .db import Database
 from .capacity import Capacity
 
-__version__ = "0.8.0"
+__version__ = "0.9.0"
 
 __all__ = [
     "serve",

@@ -44,7 +44,9 @@ def home(req):
     return [
         h.div({"class": "card"},
             h.div({"class": f"mode {mode}"}, mode.upper()),
-            h.div({"class": "count"}, f"{CAPACITY.count('status')} viewer(s)"),
+            h.div({"class": "count"}, f"{CAPACITY.count('status')} on page"),
+            h.div({"class": "count", "style": "font-size:1.5rem; color:#666"},
+                  f"{CAPACITY.total()} on server"),
             h.div({"class": "hint"},
                 "Open more tabs to this URL. ",
                 h.br(),

@@ -112,28 +112,30 @@ def card(*kids, **attrs):
 def footer(topic):
     """pg-footer with live status tags.
 
-    'watching' shows current SSE viewers of `topic` from the Capacity
-    instance. Note: viewers only increment on stream open; the count
-    appears in re-renders triggered by db.changes.notify(), so a join
-    by itself won't push the new number. Open caps low for testing
-    (CAPACITY.soft_cap=2) so this is easy to observe.
+    Two viewer counters now:
+      - 'on page': SSE viewers of THIS topic (per-resource)
+      - 'on server': SSE viewers across all topics (server-wide)
+    Both reflect ACTIVE SSE connections only. Polled and static tabs
+    don't count — they don't hold capacity slots in the new design.
     """
     n_users    = db.one("SELECT COUNT(*) FROM user")[0]
     n_rooms    = db.one("SELECT COUNT(*) FROM room")[0]
     n_msgs     = db.one("SELECT COUNT(*) FROM msg")[0]
-    n_watching = CAPACITY.count(topic) if topic else 0
+    n_page     = CAPACITY.count(topic) if topic else 0
+    n_server   = CAPACITY.total()
     mode       = CAPACITY.mode(topic)  if topic else "static"
     mode_tag   = {"live": "suc", "poll": "wrn", "static": "dgr"}[mode]
     items = [
         h.span({"class": f"tag {mode_tag}", "style": "--type:-2"}, mode),
-        h.span({"class": "tag inf", "style": "--type:-2"}, f"watching {n_watching}"),
+        h.span({"class": "tag inf", "style": "--type:-2"}, f"on page {n_page}"),
+        h.span({"class": "tag inf", "style": "--type:-2"}, f"on server {n_server}"),
         h.span({"class": "tag", "style": "--type:-2"}, f"users {n_users}"),
         h.span({"class": "tag", "style": "--type:-2"}, f"rooms {n_rooms}"),
         h.span({"class": "tag", "style": "--type:-2"}, f"msgs {n_msgs}"),
     ]
     return h.div({"class": "pg-footer flank-end",
                   "style": "--type:-1; --fg:-0.5; padding-block:0.4lh"},
-        h.span("py_sse 0.8 chat demo"),
+        h.span("py_sse 0.9 chat demo"),
         h.div({"class": "row", "style": "gap:0.3lh"}, *items))
 
 # ─── envelope helper for non-live routes ──────────────────────────────

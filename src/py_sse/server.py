@@ -584,36 +584,54 @@ def live(handler=None, *, topic=None, hard_cap=None):
         def render_inner_html():
             return _render_children(handler(req))
 
-        accept = req["headers"].get("accept", "")
-        is_sse_request = "text/event-stream" in accept
+        # The framework distinguishes browser navigations from Datastar
+        # follow-up requests by the `Datastar-Request` header. Navigations
+        # always get a full HTML envelope with data-init; Datastar requests
+        # get capacity-aware transport (SSE for live, HTML+interval for
+        # poll, HTML+nothing for static).
+        #
+        # Why not branch on the Accept header? Datastar accepts both
+        # text/event-stream and text/html. The server chooses based on
+        # capacity, not the client. Branching on Accept caused polled
+        # tabs to upgrade to SSE on their first interval tick because
+        # Datastar always sends text/event-stream in Accept.
+        is_datastar = req["headers"].get("datastar-request", "").lower() == "true"
+        path = req["path"]
 
-        if is_sse_request:
-            return _stream_live(t, capacity, changes, render_inner_html,
-                                on_event, req)
+        if not is_datastar:
+            # Browser navigation. Always return HTML with data-init so the
+            # client's Datastar follow-up can resolve transport. No-JS
+            # clients see the rendered content and stop here.
+            inner_html = render_inner_html()
+            wrapper_node = h.div({"id": LIVE_ROOT_ID,
+                                  "data-init": f"@get('{path}')"},
+                                 Safe(inner_html))
+            on_event({"type": "page_render", "topic": t, "mode": "navigation",
+                      "path": path, "viewer_count": capacity.count(t)})
+            return html(_envelope_doc(head_fragments, wrapper_node, ui_theme))
 
-        # Non-SSE: initial load, poll refetch, or static. The mode is
-        # recomputed on every request, so a polling client whose capacity
-        # has dropped below soft_cap on a later refetch will receive a
-        # data-init wrapper and naturally upgrade back to SSE.
+        # Datastar request. Decide transport by capacity.
         mode = capacity.mode(t)
         if hard_cap is not None and capacity.count(t) >= hard_cap:
             mode = "static"
 
-        inner_html = render_inner_html()
-        path = req["path"]
-        wrapper_attrs = {"id": LIVE_ROOT_ID}
         if mode == "live":
-            wrapper_attrs["data-init"] = f"@get('{path}')"
-        elif mode == "poll":
+            return _stream_live(t, capacity, changes, render_inner_html,
+                                on_event, req)
+
+        # Poll or static: respond with HTML. No capacity slot held.
+        inner_html = render_inner_html()
+        wrapper_attrs = {"id": LIVE_ROOT_ID}
+        if mode == "poll":
             interval_ms = capacity.poll_interval_ms(t)
             wrapper_attrs[f"data-on-interval__duration.{interval_ms}ms"] = (
                 f"@get('{path}')")
-        # static: just the id
-
+        # static: just the id, no transport attribute
         wrapper_node = h.div(wrapper_attrs, Safe(inner_html))
         on_event({"type": "page_render", "topic": t, "mode": mode,
                   "path": path, "viewer_count": capacity.count(t)})
-        return html(_envelope_doc(head_fragments, wrapper_node, ui_theme))
+        # Datastar response: just the morphed fragment, not a full envelope.
+        return html(_h_render(wrapper_node))
 
     return wrapper
 
@@ -647,14 +665,21 @@ def _stream_live(topic, capacity, changes, render_inner_html,
             frames_sent += 1
             yield frame()
             while True:
-                if changes.wait(topic, timeout=15):
+                # 2-second timeout = ~4 seconds to detect a dead client
+                # in the worst case (TCP buffers one write, second write
+                # surfaces BrokenPipeError). Was 15s; that was too slow
+                # for capacity to feel responsive on tab close.
+                if changes.wait(topic, timeout=2):
                     try:
                         frames_sent += 1
                         yield frame()
                     except (OSError, BrokenPipeError):
                         return
                 else:
-                    yield sse_keepalive()
+                    try:
+                        yield sse_keepalive()
+                    except (OSError, BrokenPipeError):
+                        return
     except Exception as e:
         reason = f"error:{type(e).__name__}"
         raise

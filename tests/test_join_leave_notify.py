@@ -48,6 +48,7 @@ def _open_sse(port, accept_encoding="identity"):
     s = socket.socket()
     s.connect(("127.0.0.1", port))
     req = (f"GET / HTTP/1.1\r\nHost: localhost\r\n"
+           f"Datastar-Request: true\r\n"
            f"Accept: text/event-stream\r\nAccept-Encoding: {accept_encoding}\r\n\r\n")
     s.sendall(req.encode())
     return s
