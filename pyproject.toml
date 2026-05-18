@@ -1,6 +1,6 @@
 [project]
 name = "py-sse"
-version = "0.10.0a1"
+version = "0.10.0a4"
 description = "Wirth-style minimal SSE web framework with topic-scoped pub/sub"
 readme = "README.md"
 requires-python = ">=3.13"

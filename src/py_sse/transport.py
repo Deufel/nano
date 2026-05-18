@@ -24,7 +24,7 @@ import time
 from urllib.parse import parse_qs, unquote
 
 from .responses import Response, Html, Redirect, Empty, Sse, Live
-from . import _live as live_mod
+from . import dispatch
 
 logger = logging.getLogger("py_sse")
 
@@ -134,9 +134,9 @@ def signals(req):
     return {}
 
 
-# ─── the dispatcher: handler → bytes on the wire ─────────────────────
+# ─── per-request handler runner: handler → bytes on the wire ─────────
 
-def _dispatch(sock, req, router, on_event):
+def _serve_request(sock, req, router, on_event):
     handler, params = router.resolve(req["method"], req["path"])
     if handler is None:
         write_response(sock, 404, [("content-type","text/plain")], "not found")
@@ -153,29 +153,34 @@ def _dispatch(sock, req, router, on_event):
     # Resolve Live → Sse | Html (the only response that needs resolution)
     if isinstance(result, Live):
         try:
-            result = live_mod.resolve(result, req["path"], on_event=on_event)
+            result = dispatch.resolve(result, req, on_event=on_event)
         except Exception:
             logger.exception("live.resolve raised")
             write_response(sock, 500, [("content-type","text/plain")], "internal error")
             return
 
+    # Cookies the request handlers set need to flow into every response type.
+    cookie_headers = [("set-cookie", c) for c in req.get("_cookies_out", [])]
+
     if isinstance(result, Empty):
-        write_response(sock, result.status, result.headers, b"")
+        write_response(sock, result.status, result.headers + cookie_headers, b"")
         return
 
     if isinstance(result, Redirect):
         write_response(sock, result.status,
-                       [("location", result.location)], b"")
+                       [("location", result.location)] + cookie_headers, b"")
         return
 
     if isinstance(result, Html):
         body = result.body if isinstance(result.body,(bytes,str)) else str(result.body)
-        headers = list(result.headers) + [("content-type","text/html; charset=utf-8")]
+        headers = (list(result.headers)
+                   + [("content-type","text/html; charset=utf-8")]
+                   + cookie_headers)
         write_response(sock, result.status, headers, body)
         return
 
     if isinstance(result, Sse):
-        write_sse_head(sock, [])
+        write_sse_head(sock, cookie_headers)
         sock.settimeout(SSE_WRITE_TIMEOUT)
         try:
             for frame in result.frames:
@@ -206,7 +211,7 @@ def _handle_connection(sock, addr, router, on_event, access_log):
             try: write_response(sock, 400, [("content-type","text/plain")], "bad request")
             except Exception: pass
             return
-        _dispatch(sock, req, router, on_event)
+        _serve_request(sock, req, router, on_event)
     finally:
         try: sock.close()
         except Exception: pass
@@ -217,31 +222,79 @@ def _handle_connection(sock, addr, router, on_event, access_log):
 
 # ─── serve() ─────────────────────────────────────────────────────────
 
-class _Shutdown:
-    def __init__(s): s.flag = False
-    def set(s): s.flag = True
-
 def serve(router, host="127.0.0.1", port=8000,
-          on_event=None, access_log=True, max_threads=256):
+          on_event=None, access_log=True, max_threads=256,
+          log_level=logging.INFO):
     """Run the HTTP server.
 
     Thread-per-connection. Each handler runs in a fault boundary.
-    `on_event` is an optional callback fired by live() for observability:
-      type ∈ {"page_render", "stream_open", "stream_close", "stream_error"}.
+
+    Args:
+      router:      a Router instance
+      host, port:  bind address
+      on_event:    optional callback fired by dispatch.live() for observability:
+                   type ∈ {"page_render", "stream_open", "stream_close", "stream_error"}
+      access_log:  log each request when True (one line per request)
+      max_threads: maximum concurrent in-flight requests; past this, new
+                   connections get 503
+      log_level:   if logging isn't already configured, call basicConfig()
+                   at this level. Pass None to skip auto-config (e.g. if your
+                   app sets up its own logging).
+
+    Handles SIGINT (Ctrl+C) and SIGTERM cleanly. Re-raises neither.
     """
+    # Auto-configure logging only if the app hasn't done so. The root logger
+    # has no handlers in the default state — checking that lets us be polite
+    # to apps that have their own setup.
+    if log_level is not None and not logging.getLogger().handlers:
+        logging.basicConfig(
+            level=log_level,
+            format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+            datefmt="%H:%M:%S",
+        )
+
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     srv.bind((host, port))
     srv.listen(128)
     logger.info("py_sse listening on http://%s:%d", host, port)
 
-    shutdown = _Shutdown()
+    shutdown = threading.Event()
+
+    # Wire up signals so Ctrl+C / SIGTERM unblock accept() cleanly. We do
+    # this by setting the shutdown flag AND closing the listening socket
+    # (so accept() raises OSError and the loop exits).
+    import signal as _signal
+    def _signal_handler(signum, frame):
+        if not shutdown.is_set():
+            sig_name = _signal.Signals(signum).name if isinstance(signum,int) else str(signum)
+            logger.info("received %s, shutting down", sig_name)
+            shutdown.set()
+            try: srv.close()
+            except Exception: pass
+
+    prev_int = prev_term = None
+    try:
+        # Only install signal handlers if we're in the main thread. (When
+        # py_sse is used embedded in another app, the user's serve() may
+        # be in a worker thread; signal.signal() would raise there.)
+        if threading.current_thread() is threading.main_thread():
+            prev_int  = _signal.signal(_signal.SIGINT,  _signal_handler)
+            prev_term = _signal.signal(_signal.SIGTERM, _signal_handler)
+        else:
+            logger.info("serve() running in background thread; "
+                        "SIGINT/SIGTERM handlers not installed")
+    except (ValueError, OSError):
+        # Some environments forbid signal.signal() — proceed without it.
+        pass
+
     sem = threading.BoundedSemaphore(max_threads)
     try:
-        while not shutdown.flag:
+        while not shutdown.is_set():
             try:
                 sock, addr = srv.accept()
             except OSError:
+                # Listening socket was closed (clean shutdown) or other error.
                 break
 
             if not sem.acquire(blocking=False):
@@ -259,6 +312,17 @@ def serve(router, host="127.0.0.1", port=8000,
                 try:    _handle_connection(sock, addr, router, on_event, access_log)
                 finally: sem.release()
             threading.Thread(target=run, daemon=True).start()
+    except KeyboardInterrupt:
+        # Safety net: if a signal arrives before our handler is installed
+        # (rare but possible), Python's default behavior bubbles
+        # KeyboardInterrupt here. Treat as clean shutdown.
+        logger.info("interrupted, shutting down")
     finally:
         try: srv.close()
         except Exception: pass
+        # Restore previous signal handlers, if any.
+        try:
+            if prev_int  is not None: _signal.signal(_signal.SIGINT,  prev_int)
+            if prev_term is not None: _signal.signal(_signal.SIGTERM, prev_term)
+        except Exception: pass
+        logger.info("py_sse stopped")
