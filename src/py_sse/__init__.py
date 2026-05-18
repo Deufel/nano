@@ -1,71 +1,37 @@
-"""py_sse — a Wirth-style minimal SSE web framework.
+"""py_sse — a small server framework for Datastar-style apps.
 
-Real-time hypermedia over HTTP/1.1 with brotli-compressed SSE.
-One OS thread per connection. Topic-scoped pub/sub via hierarchical
-subjects. No async/await.
+Designed around four orthogonal primitives:
 
-Public API:
-    serve(routes, *, host, port, before_hooks, capacity, changes,
-          head, on_event, ui_theme, max_connections, access_log)
+  Router    — chi-style routing (routing.py)
+  Changes   — bounded pub/sub (changes.py)
+  Capacity  — load shedding (capacity.py)
+  Database  — SQLite wrapper (db.py)
 
-    live(handler, topic=..., hard_cap=...)   # function or decorator
+And one composing helper:
 
-    Database(path, schema, changes=None)
-    Changes()                            # topic-scoped pub/sub
-    Capacity(soft_cap, hard_cap=None,    # viewer capacity
-             min_poll_ms, max_poll_ms, ramp_users)
+  live()    — composes Changes + Capacity + SSE for live updates (live.py)
 
-    # Responses
-    html(body, status=200)
-    redirect(location, status=303)
-    error(status, message="")
-    blob(data, content_type, filename=None)
-    no_content()
+Responses are structured values: Html, Redirect, Empty, Sse, Live.
+Handlers return them; the transport interprets.
 
-    # Request helpers
-    set_cookie(req, name, value, **opts)
-    signals(req)
-
-    # SSE primitives
-    sse_data(text)
-    sse_event(event_name, data)
-    sse_keepalive()
+Each handler runs in a fault boundary — exceptions become 500s, never
+partial responses, never one crashed handler taking down others.
 """
 
-from .server import (
-    serve,
-    live,
-    Changes,
-    html,
-    redirect,
-    error,
-    blob,
-    no_content,
-    set_cookie,
-    signals,
-    sse_data,
-    sse_event,
-    sse_keepalive,
-)
-from .db import Database
-from .capacity import Capacity
+__version__ = "0.10.0"
 
-__version__ = "0.9.0"
+from .routing  import Router
+from .changes  import Changes, OverCapacity
+from .capacity import Capacity
+from .db       import Database
+from ._live    import live
+from .responses import html, redirect, no_content, sse, page, Html, Redirect, Empty, Sse, Live, Response
+from .transport import serve, signals
 
 __all__ = [
-    "serve",
-    "live",
-    "Changes",
-    "Database",
-    "Capacity",
-    "html",
-    "redirect",
-    "error",
-    "blob",
-    "no_content",
-    "set_cookie",
-    "signals",
-    "sse_data",
-    "sse_event",
-    "sse_keepalive",
+    "Router", "Changes", "OverCapacity", "Capacity", "Database",
+    "live", "html", "redirect", "no_content", "sse", "page",
+    "Html", "Redirect", "Empty", "Sse", "Live", "Response",
+    "serve", "signals",
+    "__version__",
 ]

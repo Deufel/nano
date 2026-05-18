@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.13"
-# dependencies = ["py-sse>=0.8.0","html-tags>=0.4.4"]
+# dependencies = ["py-sse>=0.9.0","html-tags>=0.4.4"]
 # ///
 """Multi-room chat — py_sse 0.8.0 demo.
 

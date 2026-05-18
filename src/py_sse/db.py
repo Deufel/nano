@@ -28,7 +28,7 @@ import threading
 
 import apsw
 
-from .server import Changes
+from .changes import Changes
 
 
 class Database:
