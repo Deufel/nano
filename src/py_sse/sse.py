@@ -26,3 +26,25 @@ def keepalive():
 def datastar_patch_elements(html_str):
     "Build a `datastar-patch-elements` event carrying the given HTML."
     return event(f"elements {html_str}", event_type="datastar-patch-elements")
+
+def datastar_redirect(url):
+    """Build an SSE event that tells the browser to navigate to `url`.
+
+    Used by responses.ds_redirect() for auth-flow navigation (sign-in,
+    sign-out). The browser receives an SSE patch-elements event that
+    appends a <script> tag setting window.location.
+
+    The setTimeout wrapper avoids a Firefox quirk where script-driven
+    location changes replace history instead of pushing.
+
+    This is the only intended use of script-execution from the server.
+    Writes (event creation, deletion, etc.) should notify a topic and
+    let the live() region re-render; they should not redirect.
+    """
+    # Escape so embedded quotes can't break out of the JS string.
+    safe = url.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "")
+    payload = (f"mode append\n"
+               f"selector body\n"
+               f"elements <script>setTimeout(() => "
+               f'window.location = "{safe}")</script>')
+    return event(payload, event_type="datastar-patch-elements")

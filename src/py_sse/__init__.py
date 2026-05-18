@@ -25,13 +25,13 @@ from .changes  import Changes, OverCapacity
 from .capacity import Capacity
 from .db       import Database
 from .dispatch import live, RenderCtx
-from .responses import html, redirect, no_content, sse, page, Html, Redirect, Empty, Sse, Live, Response
+from .responses import html, redirect, ds_redirect, no_content, sse, page, Html, Redirect, Empty, Sse, Live, Response
 from .transport import serve, signals
 
 __all__ = [
     "Router", "Changes", "OverCapacity", "Capacity", "Database",
     "live", "RenderCtx",
-    "html", "redirect", "no_content", "sse", "page",
+    "html", "redirect", "ds_redirect", "no_content", "sse", "page",
     "Html", "Redirect", "Empty", "Sse", "Live", "Response",
     "serve", "signals",
     "__version__",

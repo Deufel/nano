@@ -54,6 +54,24 @@ def redirect(location,status=303): return Redirect(location,status)
 def no_content(): return Empty()
 def sse(frames): return Sse(frames)
 
+def ds_redirect(url):
+    """Tell the browser to navigate to `url` via Datastar.
+
+    This is ONLY for cases where the page's identity should change — i.e.
+    after sign-in (now you're an authenticated user, go to /home) or
+    sign-out (you're anonymous, go to /). The browser actually navigates;
+    the URL bar updates; back/forward works.
+
+    Do NOT use this to "show the user the result of a write." Writes
+    should mutate state, call `db.changes.notify(topic)`, and return
+    `no_content()`. Any live() region subscribed to that topic re-renders
+    automatically. The framework is built around that loop; ds_redirect
+    is the escape hatch for the case where the loop doesn't apply
+    (because the user's identity changed).
+    """
+    from .sse import datastar_redirect
+    return Sse(iter([datastar_redirect(url)]))
+
 def page(body, head=None, title=None, ui_theme="dark", status=200,
          tab_signal=True):
     """Build a full HTML page Response.
