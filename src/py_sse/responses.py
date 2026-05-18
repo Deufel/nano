@@ -54,13 +54,18 @@ def redirect(location,status=303): return Redirect(location,status)
 def no_content(): return Empty()
 def sse(frames): return Sse(frames)
 
-def page(body, head=None, title=None, ui_theme="dark", status=200):
+def page(body, head=None, title=None, ui_theme="dark", status=200,
+         tab_signal=True):
     """Build a full HTML page Response.
 
-    body:    Node, Safe, or iterable of those — goes inside <body>
-    head:    iterable of Nodes — extra <head> fragments
-    title:   optional string — adds <title> at the start of <head>
-    ui_theme: value for <html data-ui-theme="...">
+    body:       Node, Safe, or iterable of those — goes inside <body>
+    head:       iterable of Nodes — extra <head> fragments
+    title:      optional string — adds <title> at the start of <head>
+    ui_theme:   value for <html data-ui-theme="...">
+    tab_signal: if True (default), emit data-signals-psse_tab on <body>
+                so each tab self-assigns a UUID via crypto.randomUUID().
+                The signal is declared on <body> (which is never morphed),
+                so it persists for the lifetime of the tab.
 
     Returns an Html Response.
     """
@@ -74,10 +79,23 @@ def page(body, head=None, title=None, ui_theme="dark", status=200):
     else:
         body_children = [body]
 
-    page = h.html({"id":"page","data-ui-theme":ui_theme},
+    body_attrs = {"class": "page stage"}
+    if tab_signal:
+        # Client-owned identity. Each tab evaluates crypto.randomUUID()
+        # once on page load via a Datastar expression. The signal lives
+        # on <body>, never morphed, so it persists for the tab's lifetime.
+        #
+        # We use the JSON-object form `data-signals__ifmissing="{psseTab: ...}"`
+        # rather than the colon syntax so the signal name is unambiguous
+        # (avoids any attribute-name-parsing issues with underscores).
+        # The signal name "psseTab" is camelCase — no underscores, which
+        # are reserved in Datastar attribute names.
+        body_attrs["data-signals__ifmissing"] = "{psseTab: crypto.randomUUID()}"
+
+    doc = h.html({"id":"page","data-ui-theme":ui_theme},
         h.head(
             h.meta(charset="utf-8"),
             h.meta(name="viewport", content="width=device-width, initial-scale=1"),
             *head_frags),
-        h.body({"class":"page stage"}, *body_children))
-    return Html("<!doctype html>" + h_render(page), status)
+        h.body(body_attrs, *body_children))
+    return Html("<!doctype html>" + h_render(doc), status)
